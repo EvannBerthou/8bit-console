@@ -44,16 +44,20 @@
 // 459 + 160 = 619 bytes
 
 // Memory Mapping
+// TODO: Define Macros for addresses
 // 0x0000 - 0x3FFF -> Fixed Memory Bank (16Kb)
 // 0x4000 - 0x7FFF -> Memory Bank from Bank Pointer (16Kb)
 // 0x8000 - 0x80FF -> System I/O (256 bytes)
 //   - 0x8000 -> Trigger GPU Refresh
 //   - 0x8001 -> X GPU Scrolling
 //   - 0x8002 -> Y GPU Scrolling
+//   - 0x8003 -> ROM Bank Pointer
+//   - 0x8004 -> Video Bank Pointer
 // 0x8100 - 0xA0FF -> RAM (8Kb)
 // 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb)
 // 0xD100 - 0xD36B -> GPU (619 bytes)
-// 0xD200 - 0xFFFF -> TODO (12Kb restant)
+// 0xD36C - 0xD1FF -> Nothing
+// 0xD200 - 0xFFFF -> Stack (12Kb) //TODO: May be used by something else later
 
 typedef struct {
     uint8_t memory[CPU_MEMORY];
@@ -92,6 +96,28 @@ void dump(vm *v) {
 }
 
 void load_tile_map(vm *v) {
+    FILE *f = fopen("data.bin", "rb");
+    if (!f) ABORT("Can't open file");
+    uint8_t buff[16];
+    uint16_t ptr = 0;
+    uint8_t n = 0;
+    uint8_t tile_count = 0;
+    while ((n = fread(&buff, sizeof(uint8_t), 16, f))) {
+        for (uint8_t i = 0; i < n; i++) {
+            v->memory[0xA100 + ptr] = buff[i];
+            ptr++;
+            // End of tile
+            if (ptr % 24 == 0) {
+                v->memory[0xD100 + tile_count * 3 + 0] = tile_count;
+                v->memory[0xD100 + tile_count * 3 + 1] = tile_count % 16;
+                v->memory[0xD100 + tile_count * 3 + 2] = tile_count / 16;
+                tile_count++;
+            }
+        }
+    }
+    fclose(f);
+    return;
+
     v->memory[0xA100 + 0] = 0xDB;
     v->memory[0xA100 + 1] = 0xB6;
     v->memory[0xA100 + 2] = 0x6D;

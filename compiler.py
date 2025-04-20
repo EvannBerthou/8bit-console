@@ -190,7 +190,7 @@ def main():
                 if instruction in macros:
                     continue
                 instruction = labels[instruction]
-            v = instruction.to_bytes(1, signed=instruction < 0, byteorder='big')
+            v = instruction.to_bytes(1, signed=instruction < 0, byteorder='little')
             f.write(v)
 
 if __name__ == "__main__":

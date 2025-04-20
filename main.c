@@ -54,6 +54,7 @@
 //   - 0x8002 -> Y GPU Scrolling
 //   - 0x8003 -> ROM Bank Pointer
 //   - 0x8004 -> Video Bank Pointer
+//   - 0x8005 -> Input
 // 0x8100 - 0xA0FF -> RAM (8Kb)
 // 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb)
 //  0xA100 - 0xB8FF -> Background tiles
@@ -109,17 +110,12 @@ void dump(vm *v) {
     printf("\n");
 }
 
-void load_tile_map(vm *v) {
-    for (int i = 0; i < 4; i++) {
-        mem_write(v, 0xD100 + i * 3 + 0, i);
-        mem_write(v, 0xD100 + i * 3 + 1, i % 16);
-        mem_write(v, 0xD100 + i * 3 + 2, i / 16);
-    }
-}
-
 void vm_init(vm *v) {
-    for (uint16_t i = 0; i < 8 * 1024; i++) mem_write(v, 0x8100 + i, 0);
+    for (uint16_t i = 0; i < 0x2000; i++)     v->ram[i] = 0;
+    for (uint16_t i = 0; i < 0xFF; i++)       v->system_io[i] = 0;
+    for (uint16_t i = 0; i < 0x3000; i++)     v->stack[i] = 0;
     for (uint16_t i = 0; i < GPU_MEMORY; i++) v->gpu_memory[i] = 0;
+    for (uint16_t i = 0; i < 619; i++)        v->gpu_tiles[i] = 255;
     for (uint8_t i = 0; i < REG_COUNT; i++)   v->regs[i] = 0;
     v->pc = 0;
     v->sp = 0xFFFF;
@@ -167,6 +163,7 @@ uint8_t mem_read(vm *v, uint16_t addr) {
     }
     if (addr <= 0x80FF) return v->system_io[addr & 0xFF];
     if (addr <= 0xA0FF) return v->ram[addr - 0x8100];
+    //TODO: Based on bank
     if (addr <= 0xD0FF) return v->cart->content[addr - 0xA100 + 0x4000];
     if (addr <= 0xD36B) return v->gpu_tiles[addr - 0xD100];
     if (addr <= 0xD1FF) ABORT("Unused memory mapping");
@@ -423,15 +420,39 @@ void render_game(vm *v) {
     }
 }
 
+// Inputs are encoding into a single byte
+// 0 -> A Button
+// 1 -> B Button
+// 2 -> Up Pad
+// 3 -> Right Pad
+// 4 -> Down Pad
+// 5 -> Left Pad
+// 6 -> Select
+// 7 -> Start
+void refresh_input(vm *v) {
+    uint8_t key_press = 0
+        | IsKeyDown(KEY_J) << 0
+        | IsKeyDown(KEY_K) << 1
+        | IsKeyDown(KEY_W) << 2
+        | IsKeyDown(KEY_D) << 3
+        | IsKeyDown(KEY_S) << 4
+        | IsKeyDown(KEY_A) << 5
+        | IsKeyDown(KEY_E) << 7
+        | IsKeyDown(KEY_R) << 7;
+    mem_write(v, 0x8005, key_press);
+}
+
 void vm_run(vm *v) {
     while (!WindowShouldClose()) {
         vm_exec_opcode(v);
         advance_pc(v);
         if (mem_read(v, 0x8000) == 1) {
-            mem_write(v, 0x8000, 1);
+            mem_write(v, 0x8000, 0);
+            for (uint16_t i = 0; i < GPU_MEMORY; i++) v->gpu_memory[i] = 0;
             BeginDrawing();
                 ClearBackground(BLACK);
                 render_game(v);
+                refresh_input(v);
             EndDrawing();
         }
     }

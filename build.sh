@@ -1,5 +1,7 @@
 #!/bin/sh
 
-python asset_packager.py
+set -xe
+
 python compiler.py
-gcc -Wall -Wextra main.c -o main -L ./lib -lraylib -lm -ggdb && ./main
+gcc -Wall -Wextra main.c -o main -L ./lib -lraylib -lm -ggdb
+./main

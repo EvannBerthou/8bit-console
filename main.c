@@ -7,6 +7,9 @@
 
 #define ABORT(x) do { fprintf(stderr, "ABORT: %s:%d: PC=%x "x"\n", __FILE__, __LINE__, v->pc); exit(1); } while(0)
 
+#define ASSERT(x) do { if (!(x)) {fprintf(stderr, "ASSERT: %s:%d Error reading\n", __FILE__, __LINE__); exit(1);} } while(0)
+
+
 #define CPU_MEMORY ((1 << 16) - 1) 
 #define GPU_MEMORY (128 * 64)
 #define REG_COUNT 8
@@ -75,10 +78,12 @@ typedef struct {
     uint8_t game_name[16];
     uint8_t rom_bank_count;
     uint8_t video_bank_count;
+    uint8_t target_fps;
 } game_header;
 
 typedef struct {
     game_header header;
+    uint8_t *content;
 } cartdridge;
 
 void dump(vm *v) {
@@ -95,46 +100,17 @@ void dump(vm *v) {
     printf("\n");
 }
 
-void load_tile_map(vm *v) {
-    FILE *f = fopen("data.bin", "rb");
-    if (!f) ABORT("Can't open file");
-    uint8_t buff[16];
-    uint16_t ptr = 0;
-    uint8_t n = 0;
-    uint8_t tile_count = 0;
-    while ((n = fread(&buff, sizeof(uint8_t), 16, f))) {
-        for (uint8_t i = 0; i < n; i++) {
-            v->memory[0xA100 + ptr] = buff[i];
-            ptr++;
-            // End of tile
-            if (ptr % 24 == 0) {
-                v->memory[0xD100 + tile_count * 3 + 0] = tile_count;
-                v->memory[0xD100 + tile_count * 3 + 1] = tile_count % 16;
-                v->memory[0xD100 + tile_count * 3 + 2] = tile_count / 16;
-                tile_count++;
-            }
+void load_tile_map(vm *v, cartdridge *c) {
+    uint16_t tile_count = 0;
+    for (uint32_t i = 0; i < 12 * 1024; i++) {
+        uint32_t base_offset = c->header.rom_bank_count * (16 * 1024);
+        v->memory[0xA100 + i] = c->content[base_offset + i];
+        if (i % 24 == 0) {
+            v->memory[0xD100 + tile_count * 3 + 0] = tile_count;
+            v->memory[0xD100 + tile_count * 3 + 1] = tile_count % 16;
+            v->memory[0xD100 + tile_count * 3 + 2] = tile_count / 16;
+            tile_count++;
         }
-    }
-    fclose(f);
-    return;
-
-    v->memory[0xA100 + 0] = 0xDB;
-    v->memory[0xA100 + 1] = 0xB6;
-    v->memory[0xA100 + 2] = 0x6D;
-    for (int i = 0; i < 6 * 3; i += 3) {
-        v->memory[0xA100 + 3 + i] = 0x03;
-        v->memory[0xA100 + 4 + i] = rand();
-        v->memory[0xA100 + 5 + i] = 0x60;
-    }
-    v->memory[0xA100 + 21] = 0xDB;
-    v->memory[0xA100 + 22] = 0xB6;
-    v->memory[0xA100 + 23] = 0x6D;
-
-
-    for (uint16_t i = 0; i < 17 * 9; i++) {
-        v->memory[0xD100 + i * 3 + 0] = 0;
-        v->memory[0xD100 + i * 3 + 1] = i % 17;
-        v->memory[0xD100 + i * 3 + 2] = i / 17;
     }
 }
 
@@ -146,20 +122,34 @@ void vm_init(vm *v) {
     v->sp = BASE_STACK_ADDR - 1;
 }
 
-void vm_load(vm *v, const char *binary) {
+void cart_load(cartdridge *cart, const char *binary) {
     FILE *f = fopen(binary, "rb");
-    if (!f) ABORT("Can't open file");
+    if (!f) {
+        fprintf(stderr, "Can't open file");
+        exit(1);
+    }
+
+    ASSERT(fread(&cart->header.entrypoint, sizeof(uint16_t), 1, f));
+    ASSERT(fread(&cart->header.game_name, sizeof(uint8_t), 16, f));
+    ASSERT(fread(&cart->header.rom_bank_count, sizeof(uint8_t), 1, f));
+    ASSERT(fread(&cart->header.video_bank_count, sizeof(uint8_t), 1, f));
+    ASSERT(fread(&cart->header.target_fps, sizeof(uint8_t), 1, f));
+
+    uint32_t content_size = cart->header.rom_bank_count * (16 * 1024) 
+                            + cart->header.video_bank_count * (12 * 1024);
+    cart->content = malloc(sizeof(uint8_t) * content_size);
+    ASSERT(cart->content != NULL);
+
     uint8_t buff[16];
     uint16_t ptr = 0;
     uint8_t n = 0;
     while ((n = fread(&buff, sizeof(uint8_t), 16, f))) {
         for (uint8_t i = 0; i < n; i++) {
-            v->memory[ptr] = buff[i];
+            cart->content[ptr] = buff[i];
             ptr++;
         }
     }
     fclose(f);
-    load_tile_map(v);
 }
 
 uint16_t advance_pc(vm *v) { v->pc++; return v->pc; }
@@ -405,11 +395,20 @@ void vm_run(vm *v) {
 }
 
 int main() {
-    InitWindow(1024, 512, "OK");
+    InitWindow(1024, 512, "8bit-console");
     SetTargetFPS(60);
     vm v = {};
+    cartdridge c = {};
     vm_init(&v);
-    vm_load(&v, "refresh.bin");
+    cart_load(&c, "refresh.bin");
+
+    //TODO: Replace with memory mapping on read and write
+    // Rom loading
+    for (uint32_t i = 0; i < 16 * 1024; i++) {
+        v.memory[i] = c.content[i];
+    }
+    load_tile_map(&v, &c);
+
     vm_run(&v);
     return 0;
 }

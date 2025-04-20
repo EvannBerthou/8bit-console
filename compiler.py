@@ -1,3 +1,27 @@
+tiles = [
+    [
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+    ],
+    [
+        [3, 3, 3, 3, 3, 3, 3, 3],
+        [3, 2, 2, 2, 2, 2, 2, 3],
+        [3, 2, 4, 4, 4, 4, 2, 3],
+        [3, 2, 4, 5, 5, 4, 2, 3],
+        [3, 2, 4, 5, 5, 4, 2, 3],
+        [3, 2, 4, 4, 4, 4, 2, 3],
+        [3, 2, 2, 2, 2, 2, 2, 3],
+        [3, 3, 3, 3, 3, 3, 3, 3],
+    ],
+]
+
+
 macros = {}
 
 def parse_macro(lines, start):
@@ -184,7 +208,17 @@ def main():
         lines = [line for line in lines if line and not line.startswith("//")]
     instructions, labels = first_pass(lines)
 
+    zero = 0
+    un = 1
+    fps = 60
     with open("refresh.bin", "wb") as f:
+        # Header
+        f.write(zero.to_bytes(2)) # Entrypoint
+        f.write("Hello".ljust(16).encode()) # Title
+        f.write(un.to_bytes(1)) # rom bank count
+        f.write(un.to_bytes(1)) # video_bank_count
+        f.write(fps.to_bytes(1)) # target_fps
+
         for i, instruction in enumerate(instructions):
             if not isinstance(instruction, int): # We are on a label
                 if instruction in macros:
@@ -192,6 +226,22 @@ def main():
                 instruction = labels[instruction]
             v = instruction.to_bytes(1, signed=instruction < 0, byteorder='little')
             f.write(v)
+
+        for i in range((16 * 1024) - len(instructions)):
+            f.write(zero.to_bytes(1))
+
+        # Asset packer
+        for tile in tiles:
+            for row in tile:
+                res = 0
+                for i in range(8):
+                    res |= row[i] << (i * 3)
+                print(bin(res), hex(res))
+                v = res.to_bytes(3, signed=False, byteorder='little')
+                f.write(v)
+
+        for i in range(512 - len(tiles)):
+            f.write(zero.to_bytes(24))
 
 if __name__ == "__main__":
     main()

@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <ctype.h>
 #include <stdbool.h>
 #include "include/raylib.h"
 
@@ -10,7 +9,6 @@
 #define ASSERT(x) do { if (!(x)) {fprintf(stderr, "ASSERT: %s:%d Error reading\n", __FILE__, __LINE__); exit(1);} } while(0)
 
 
-#define CPU_MEMORY ((1 << 16) - 1) 
 #define GPU_MEMORY (128 * 64)
 #define REG_COUNT 8
 
@@ -57,7 +55,7 @@
 //   - 0x8003 -> ROM Bank Pointer
 //   - 0x8004 -> Video Bank Pointer
 // 0x8100 - 0xA0FF -> RAM (8Kb)
-// 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb) 
+// 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb)
 //  0xA100 - 0xB8FF -> Background tiles
 //  0xB900 - 0xD0FF -> Sprites
 // 0xD100 - 0xD36B -> GPU (619 bytes)
@@ -65,17 +63,6 @@
 //  0xD2CC - 0xD36B -> Background tiles on 4 bytes encoding (idx, x scroll, y scroll, flags)
 // 0xD36C - 0xD1FF -> Nothing
 // 0xD200 - 0xFFFF -> Stack (12Kb) //TODO: May be used by something else later
-
-typedef struct {
-    uint8_t memory[CPU_MEMORY];
-    uint8_t regs[REG_COUNT];
-    uint16_t sp;
-    uint16_t pc;
-    uint8_t flags;
-
-    uint8_t gpu_memory[GPU_MEMORY];
-    uint16_t gpu_pointer;
-} vm;
 
 typedef struct {
     uint16_t entrypoint;
@@ -90,13 +77,31 @@ typedef struct {
     uint8_t *content;
 } cartdridge;
 
+typedef struct {
+    uint8_t system_io[0xFF];
+    uint8_t ram[0x2000];
+    uint8_t gpu_tiles[619];
+    uint8_t stack[0x3000];
+
+    uint8_t regs[REG_COUNT];
+    uint16_t sp;
+    uint16_t pc;
+    uint8_t flags;
+
+    uint8_t gpu_memory[GPU_MEMORY];
+    uint16_t gpu_pointer;
+
+    cartdridge *cart;
+} vm;
+
+uint8_t mem_read(vm *v, uint16_t addr);
+void mem_write(vm *v, uint16_t addr, uint8_t value);
+
 void dump(vm *v) {
     printf("PC=%d\n", v->pc);
-    printf("SP TOP=%x\n", v->memory[v->sp+1]);
+    printf("SP TOP=%x\n", mem_read(v, v->sp+1));
     printf("FLAG=%x\n", v->flags);
-    for (uint8_t i = 0; i < 20; i++) printf("%x ", v->memory[i]);
-    printf("\n");
-    for (uint8_t i = 0; i < 20; i++) printf("%c ", isprint(v->memory[i]) ? v->memory[i] : ' ');
+    for (uint8_t i = 0; i < 20; i++) printf("%x ", mem_read(v, i));
     printf("\n");
     for (uint8_t i = 0; i < REG_COUNT; i++)  printf("%x ", v->regs[i]);
     printf("\n");
@@ -104,26 +109,20 @@ void dump(vm *v) {
     printf("\n");
 }
 
-void load_tile_map(vm *v, cartdridge *c) {
-    uint16_t tile_count = 0;
-    for (uint32_t i = 0; i < 12 * 1024; i++) {
-        uint32_t base_offset = c->header.rom_bank_count * (16 * 1024);
-        v->memory[0xA100 + i] = c->content[base_offset + i];
-        if (i % 24 == 0) {
-            v->memory[0xD100 + tile_count * 3 + 0] = tile_count;
-            v->memory[0xD100 + tile_count * 3 + 1] = tile_count % 16;
-            v->memory[0xD100 + tile_count * 3 + 2] = tile_count / 16;
-            tile_count++;
-        }
+void load_tile_map(vm *v) {
+    for (int i = 0; i < 4; i++) {
+        mem_write(v, 0xD100 + i * 3 + 0, i);
+        mem_write(v, 0xD100 + i * 3 + 1, i % 16);
+        mem_write(v, 0xD100 + i * 3 + 2, i / 16);
     }
 }
 
 void vm_init(vm *v) {
-    for (uint16_t i = 0; i < CPU_MEMORY; i++) v->memory[i] = 0;
+    for (uint16_t i = 0; i < 8 * 1024; i++) mem_write(v, 0x8100 + i, 0);
     for (uint16_t i = 0; i < GPU_MEMORY; i++) v->gpu_memory[i] = 0;
     for (uint8_t i = 0; i < REG_COUNT; i++)   v->regs[i] = 0;
     v->pc = 0;
-    v->sp = BASE_STACK_ADDR - 1;
+    v->sp = 0xFFFF;
 }
 
 void cart_load(cartdridge *cart, const char *binary) {
@@ -156,10 +155,49 @@ void cart_load(cartdridge *cart, const char *binary) {
     fclose(f);
 }
 
+//TODO: Bound checking
+uint8_t mem_read(vm *v, uint16_t addr) {
+    if (addr <= 0x3FFF) return v->cart->content[addr & 0x3FFF];
+    //TODO: Based on bank
+    if (addr <= 0x7FFF) {
+        if (v->cart->header.rom_bank_count == 1) {
+            ABORT("There is only one fixed bank.");
+        }
+        return v->cart->content[addr];
+    }
+    if (addr <= 0x80FF) return v->system_io[addr & 0xFF];
+    if (addr <= 0xA0FF) return v->ram[addr - 0x8100];
+    if (addr <= 0xD0FF) return v->cart->content[addr - 0xA100 + 0x4000];
+    if (addr <= 0xD36B) return v->gpu_tiles[addr - 0xD100];
+    if (addr <= 0xD1FF) ABORT("Unused memory mapping");
+    //if (addr <= 0xFFFF) 
+    return v->stack[addr - 0xD200];
+}
+
+//TODO: Bound checking
+void mem_write(vm *v, uint16_t addr, uint8_t value) {
+    if (addr <= 0x3FFF) { v->cart->content[addr & 0x3FFF] = value; return; }
+    //TODO: Based on bank
+    if (addr <= 0x7FFF) {
+        if (v->cart->header.rom_bank_count == 1) {
+            ABORT("There is only one fixed bank.");
+        }
+        v->cart->content[addr] = value;
+        return;
+    }
+    if (addr <= 0x80FF) { v->system_io[addr & 0xFF] = value; return; }
+    if (addr <= 0xA0FF) { v->ram[addr - 0x8100] = value; return; }
+    if (addr <= 0xD0FF) ABORT("TODO: Should we be able to write directly Tile Map Bank?");
+    if (addr <= 0xD36B) { v->gpu_tiles[addr - 0xD100] = value; return; }
+    if (addr <= 0xD1FF) ABORT("Unused memory mapping");
+    //if (addr <= 0xFFFF) 
+    v->stack[addr - 0xD200] = value;
+}
+
 uint16_t advance_pc(vm *v) { v->pc++; return v->pc; }
 
 void jump(vm *v, uint8_t mode) {
-        uint16_t addr = v->memory[advance_pc(v)];
+        uint16_t addr = mem_read(v, advance_pc(v));
         switch (mode) {
             // Always
             case 0: v->pc = addr - 1; break;
@@ -174,36 +212,36 @@ void jump(vm *v, uint8_t mode) {
 uint16_t fetch_operand(vm *v, uint8_t mode) { 
     switch (mode) {
         // Immediate
-        case 0: return v->memory[advance_pc(v)];
+        case 0: return mem_read(v, advance_pc(v));
         // Memory read
         case 1: {
-            uint16_t addr = v->memory[advance_pc(v)];
-            return v->memory[addr];
+            uint16_t addr = mem_read(v, advance_pc(v));
+            return mem_read(v, addr);
         }
         // Reg
         case 2: {
-            if (v->memory[advance_pc(v)] >= REG_COUNT) {
+            if (mem_read(v, advance_pc(v)) >= REG_COUNT) {
                 ABORT("Unknown register");
             }
-            return v->regs[v->memory[v->pc]];
+            return v->regs[mem_read(v, v->pc)];
         }
         // Fetch 16 bits immediate
         case 3: {
-            uint8_t high = v->memory[advance_pc(v)];
-            uint8_t low  = v->memory[advance_pc(v)];
+            uint8_t high = mem_read(v, advance_pc(v));
+            uint8_t low  = mem_read(v, advance_pc(v));
             return high << 8 | low;
         }
         // Fetch 16 bits from memory
         case 4: {
-            uint8_t high = v->memory[advance_pc(v)];
-            uint8_t low  = v->memory[advance_pc(v)];
+            uint8_t high = mem_read(v, advance_pc(v));
+            uint8_t low  = mem_read(v, advance_pc(v));
             uint16_t addr = high << 8 | low;
-            return v->memory[addr];
+            return mem_read(v, addr);
         }
         // Fetch 16 bits from base and offset from reg
         case 5: {
-            uint8_t high = v->regs[v->memory[advance_pc(v)]];
-            uint8_t low  = v->regs[v->memory[advance_pc(v)]];
+            uint8_t high = v->regs[mem_read(v, advance_pc(v))];
+            uint8_t low  = v->regs[mem_read(v, advance_pc(v))];
             return (high << 8) | low;
         }
         // Retrieve carry
@@ -221,7 +259,7 @@ uint16_t fetch_operand(vm *v, uint8_t mode) {
 // Code: 0-16
 
 void vm_exec_opcode(vm *v) {
-    uint8_t value = v->memory[v->pc];
+    uint8_t value = mem_read(v, v->pc);
 
     // Halt
     if (value == 0xFF) {
@@ -241,21 +279,21 @@ void vm_exec_opcode(vm *v) {
         // Load acc
         case 1: v->regs[0] = fetch_operand(v, mode); break;
         // Store acc to mem
-        case 2: v->memory[fetch_operand(v, mode)] = v->regs[0]; break;
+        case 2: mem_write(v, fetch_operand(v, mode), v->regs[0]); break;
         // Store acc to reg
         case 3: v->regs[fetch_operand(v, mode)] = v->regs[0]; break;
         // Jump
         case 4: jump(v, mode); break;
         // Stack push
-        case 5: v->memory[v->sp] = fetch_operand(v, mode); v->sp--; break;
+        case 5: mem_write(v, v->sp, fetch_operand(v, mode)); v->sp--; break;
         // Stack pop into reg
         case 6: {
             v->sp++; 
             if (mode == 7) { // PC
-                v->pc = v->memory[v->sp];
+                v->pc = mem_read(v, v->sp);
             }
             else {
-                v->regs[fetch_operand(v, mode)] = v->memory[v->sp]; 
+                v->regs[fetch_operand(v, mode)] = mem_read(v, v->sp); 
             }
             break;
         }
@@ -312,6 +350,7 @@ void vm_exec_opcode(vm *v) {
             break;
         }
         // GPU Instructions
+        // Should only be used in direct GPU access mode (not implemted yet)
         // Set pixel color at pointeur position
         case 14: v->gpu_memory[v->gpu_pointer] = fetch_operand(v, mode); break;
         // Set GPU Pointer
@@ -336,15 +375,15 @@ const int COLOR_COUNT = sizeof(colors) / sizeof(colors[0]);
 
 void render_game(vm *v) {
     // Render background
-    uint8_t x_scrolling = v->memory[0x8001] % 8;
-    uint8_t y_scrolling = v->memory[0x8002] % 8;
+    uint8_t x_scrolling = mem_read(v, 0x8001) % 8;
+    uint8_t y_scrolling = mem_read(v, 0x8002) / 8;
     
     for (int i = 0; i < (17 * 9) * 3; i += 3) {
-        uint8_t tile_index = v->memory[0xD100 + i];
-        uint8_t x = v->memory[0xD100 + i + 1];
-        uint8_t y = v->memory[0xD100 + i + 2];
+        uint8_t tile_index = mem_read(v, 0xD100 + i);
+        uint8_t x = mem_read(v, 0xD100 + i + 1);
+        uint8_t y = mem_read(v, 0xD100 + i + 2);
 
-        uint8_t *tile = &v->memory[0xA100 + tile_index * 24];
+        uint16_t tile_addr = 0xA100 + tile_index * 24;
 
         size_t total_bits = 24 * 8;
         size_t num_windows = total_bits / 3;
@@ -356,10 +395,10 @@ void render_game(vm *v) {
 
             uint16_t combined = 0;
             if (byte_index < 24) {
-                combined |= tile[byte_index];
+                combined |= mem_read(v, tile_addr + byte_index); 
             }
             if (byte_index + 1 < 24) {
-                combined |= ((uint16_t)tile[byte_index + 1]) << 8;
+                combined |= ((uint16_t)mem_read(v, tile_addr + byte_index + 1)) << 8;
             }
 
             uint8_t pixel =  (combined >> bit_offset) & 0x07;
@@ -388,8 +427,8 @@ void vm_run(vm *v) {
     while (!WindowShouldClose()) {
         vm_exec_opcode(v);
         advance_pc(v);
-        if (v->memory[0x8000] == 1) {
-            v->memory[0x8000] = 0;
+        if (mem_read(v, 0x8000) == 1) {
+            mem_write(v, 0x8000, 1);
             BeginDrawing();
                 ClearBackground(BLACK);
                 render_game(v);
@@ -403,16 +442,9 @@ int main() {
     SetTargetFPS(60);
     vm v = {};
     cartdridge c = {};
+    v.cart = &c;
     vm_init(&v);
     cart_load(&c, "refresh.bin");
-
-    //TODO: Replace with memory mapping on read and write
-    // Rom loading
-    for (uint32_t i = 0; i < 16 * 1024; i++) {
-        v.memory[i] = c.content[i];
-    }
-    load_tile_map(&v, &c);
-
     vm_run(&v);
     return 0;
 }

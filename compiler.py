@@ -255,7 +255,6 @@ def main():
                     for x in range(8):
                         color = colors[pixels[(i * 8 + x), (j * 8 + y)]]
                         res |= color << (x * 3)
-                    print(res)
                     v = res.to_bytes(3, signed=False, byteorder='little')
                     f.write(v)
 

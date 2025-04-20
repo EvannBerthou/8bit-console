@@ -48,6 +48,8 @@
 // 0x4000 - 0x7FFF -> Memory Bank from Bank Pointer (16Kb)
 // 0x8000 - 0x80FF -> System I/O (256 bytes)
 //   - 0x8000 -> Trigger GPU Refresh
+//   - 0x8001 -> X GPU Scrolling
+//   - 0x8002 -> Y GPU Scrolling
 // 0x8100 - 0xA0FF -> RAM (8Kb)
 // 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb)
 // 0xD100 - 0xD36B -> GPU (619 bytes)
@@ -314,6 +316,9 @@ const int COLOR_COUNT = sizeof(colors) / sizeof(colors[0]);
 
 void render_game(vm *v) {
     // Render background
+    uint8_t x_scrolling = v->memory[0x8001] % 8;
+    uint8_t y_scrolling = v->memory[0x8002] % 8;
+    
     for (int i = 0; i < (17 * 9) * 3; i += 3) {
         uint8_t tile_index = v->memory[0xD100 + i];
         uint8_t x = v->memory[0xD100 + i + 1];
@@ -329,7 +334,6 @@ void render_game(vm *v) {
             size_t byte_index = bit_index / 8;
             size_t bit_offset = bit_index % 8;
 
-            // Combine two bytes to ensure enough bits across boundaries
             uint16_t combined = 0;
             if (byte_index < 24) {
                 combined |= tile[byte_index];
@@ -341,10 +345,13 @@ void render_game(vm *v) {
             uint8_t pixel =  (combined >> bit_offset) & 0x07;
             uint8_t offset_x = i % 8;
             uint8_t offset_y = i / 8;
-            if (x >= 16 || y >= 8) {
+
+            uint16_t final_x = x * 8 + offset_x - x_scrolling;
+            uint16_t final_y = y * 8 + offset_y - y_scrolling;
+            if (final_x >= 128 || final_y >= 64) {
                 continue;
             }
-            uint16_t gpu_addr = (x * 8 + offset_x) + ((y * 128 * 8) + (offset_y * 128));
+            uint16_t gpu_addr = final_x + y * 128 * 8 + (offset_y - y_scrolling) * 128;
             v->gpu_memory[gpu_addr] = pixel;
         }
     }
@@ -355,7 +362,6 @@ void render_game(vm *v) {
         uint8_t value = v->gpu_memory[i];
         DrawRectangle(x * 8, y * 8, 8, 8, colors[value % COLOR_COUNT]);
     }
-    //exit(0);
 }
 
 void vm_run(vm *v) {
@@ -374,6 +380,7 @@ void vm_run(vm *v) {
 
 int main() {
     InitWindow(1024, 512, "OK");
+    SetTargetFPS(60);
     vm v = {};
     vm_init(&v);
     vm_load(&v, "refresh.bin");

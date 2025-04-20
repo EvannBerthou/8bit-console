@@ -1,3 +1,5 @@
+from PIL import Image
+
 tiles = [
     [
         [1, 1, 1, 1, 1, 1, 1, 1],
@@ -231,17 +233,31 @@ def main():
             f.write(zero.to_bytes(1))
 
         # Asset packer
-        for tile in tiles:
-            for row in tile:
-                res = 0
-                for i in range(8):
-                    res |= row[i] << (i * 3)
-                print(bin(res), hex(res))
-                v = res.to_bytes(3, signed=False, byteorder='little')
-                f.write(v)
 
-        for i in range(512 - len(tiles)):
-            f.write(zero.to_bytes(24))
+        img = Image.open("sprites.png").convert("RGB")
+        pixels = img.load()
+
+        colors = {
+            (0, 0, 0): 0,
+            (255, 255, 255): 1,
+            (255, 255, 0): 2,
+            (255, 0, 255): 3,
+            (0, 255, 255): 4,
+            (0, 255, 0): 5,
+            (255, 0, 0): 6,
+            (0, 0, 255): 6,
+        }
+
+        for j in range(16):
+            for i in range(16):
+                for y in range(8):
+                    res = 0
+                    for x in range(8):
+                        color = colors[pixels[(i * 8 + x), (j * 8 + y)]]
+                        res |= color << (x * 3)
+                    print(res)
+                    v = res.to_bytes(3, signed=False, byteorder='little')
+                    f.write(v)
 
 if __name__ == "__main__":
     main()

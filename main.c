@@ -57,8 +57,12 @@
 //   - 0x8003 -> ROM Bank Pointer
 //   - 0x8004 -> Video Bank Pointer
 // 0x8100 - 0xA0FF -> RAM (8Kb)
-// 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb)
+// 0xA100 - 0xD0FF -> Tile Map Bank (512 Tiles of 24 bytes each = 12Kb) 
+//  0xA100 - 0xB8FF -> Background tiles
+//  0xB900 - 0xD0FF -> Sprites
 // 0xD100 - 0xD36B -> GPU (619 bytes)
+//  0xD100 - 0xD2CB -> Background tiles on 3 bytes encoding (idx, x scroll, y scroll)
+//  0xD2CC - 0xD36B -> Background tiles on 4 bytes encoding (idx, x scroll, y scroll, flags)
 // 0xD36C - 0xD1FF -> Nothing
 // 0xD200 - 0xFFFF -> Stack (12Kb) //TODO: May be used by something else later
 
@@ -318,14 +322,14 @@ void vm_exec_opcode(vm *v) {
 }
 
 Color colors[] = {
-    BLACK,
-    WHITE,
-    YELLOW,
-    PURPLE,
-    SKYBLUE,
-    GREEN,
-    RED,
-    BLUE,
+    {0x1D, 0x1D, 0x1D, 0xFF},
+    {0xFF, 0xFF, 0xFF, 0xFF},
+    {0xF5, 0xE9, 0xBE, 0xFF},
+    {0x9A, 0x6A, 0xCB, 0xFF},
+    {0x4A, 0x90, 0xB8, 0xFF},
+    {0x5C, 0xAD, 0x4A, 0xFF},
+    {0xB8, 0x4A, 0x4A, 0xFF},
+    {0x7D, 0x7D, 0x7D, 0xFF}
 };
 
 const int COLOR_COUNT = sizeof(colors) / sizeof(colors[0]);

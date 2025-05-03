@@ -1,29 +1,5 @@
 from PIL import Image
 
-tiles = [
-    [
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1],
-    ],
-    [
-        [3, 3, 3, 3, 3, 3, 3, 3],
-        [3, 2, 2, 2, 2, 2, 2, 3],
-        [3, 2, 4, 4, 4, 4, 2, 3],
-        [3, 2, 4, 5, 5, 4, 2, 3],
-        [3, 2, 4, 5, 5, 4, 2, 3],
-        [3, 2, 4, 4, 4, 4, 2, 3],
-        [3, 2, 2, 2, 2, 2, 2, 3],
-        [3, 3, 3, 3, 3, 3, 3, 3],
-    ],
-]
-
-
 macros = {}
 
 def parse_macro(lines, start):
@@ -57,21 +33,21 @@ def insert_macro(macro_name, args):
             s = f"{prefix}{arg}"
             operand = parse_operand(s)
             mode, *value = operand
-            opcode = opcode | mode << 4
+            opcode = opcode | mode << 5
             insts.extend([opcode, *value])
             i += 4
         elif mode in (6, 7):
-            opcode = opcode | mode << 4
+            opcode = opcode | mode << 5
             insts.extend([opcode])
             i += 2
         elif mode in (3, 4, 5):
             operand = (macros[macro_name][i + 2], macros[macro_name][i + 3])
-            opcode = opcode | mode << 4
+            opcode = opcode | mode << 5
             insts.extend([opcode, *operand])
             i += 4
         else:
             operand = macros[macro_name][i + 2]
-            opcode = opcode | mode << 4
+            opcode = opcode | mode << 5
             insts.extend([opcode, operand])
             i += 3
     return insts
@@ -198,7 +174,7 @@ def first_pass(lines):
         opcode, operand = parse_instruction(line)
         if operand:
             mode, *value = operand
-            opcode = opcode | mode << 4
+            opcode = opcode | mode << 5
             instructions.extend([opcode, *value])
         else:
             instructions.append(opcode)

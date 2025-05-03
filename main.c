@@ -12,10 +12,10 @@
 #define GPU_MEMORY (128 * 64)
 #define REG_COUNT 8
 
-#define OPCODE_MASK (uint8_t)0xF
-#define MODE_MASK   (uint8_t)0xF << 4
+#define OPCODE_MASK (uint8_t)0x1F
+#define MODE_MASK   (uint8_t)0xF << 5
 
-#define MAKE_INST(opcode, mode) ((opcode) & OPCODE_MASK) | (((mode) & MODE_MASK) << 4)
+#define MAKE_INST(opcode, mode) ((opcode) & OPCODE_MASK) | (((mode) & MODE_MASK) << 5)
 
 #define BASE_STACK_ADDR CPU_MEMORY
 
@@ -34,6 +34,23 @@
 #define ISNEG(n)                ((n & (1 << 7)) >> 7)
 
 #define SETFLAG(vm, f, x) do { vm->flags = (vm->flags & ~(f)) | x << f; } while(0)
+
+typedef enum {
+    NOOP = 0,
+    LDA = 1,
+    SAM = 2,
+    SAR = 3,
+    JMP = 4,
+    PSH = 5,
+    POP = 6,
+    CMP = 7,
+    ADD = 8,
+    AND = 9,
+    OR = 10,
+    NOT = 11,
+    SHR = 12,
+    SHL = 13,
+} OPCODE;
 
 // Background:
 // (17 * 9) * 3 = 459 bytes
@@ -217,10 +234,11 @@ uint16_t fetch_operand(vm *v, uint8_t mode) {
         }
         // Reg
         case 2: {
-            if (mem_read(v, advance_pc(v)) >= REG_COUNT) {
+            uint8_t value = mem_read(v, advance_pc(v));
+            if (value >= REG_COUNT) {
                 ABORT("Unknown register");
             }
-            return v->regs[mem_read(v, v->pc)];
+            return v->regs[value];
         }
         // Fetch 16 bits immediate
         case 3: {
@@ -252,8 +270,8 @@ uint16_t fetch_operand(vm *v, uint8_t mode) {
 
 // 0000  0000
 // mode  code
-// Mode: 0-16
-// Code: 0-16
+// Mode: 0-7
+// Code: 0-31
 
 void vm_exec_opcode(vm *v) {
     uint8_t value = mem_read(v, v->pc);
@@ -267,24 +285,17 @@ void vm_exec_opcode(vm *v) {
     }
 
     uint8_t opcode = value & OPCODE_MASK;
-    uint8_t mode   = (value & MODE_MASK) >> 4;
+    uint8_t mode   = (value & MODE_MASK) >> 5;
 
     switch (opcode) {
-        // MEMORY Instructions
-        // No-op
-        case 0: break;
-        // Load acc
-        case 1: v->regs[0] = fetch_operand(v, mode); break;
-        // Store acc to mem
-        case 2: mem_write(v, fetch_operand(v, mode), v->regs[0]); break;
-        // Store acc to reg
-        case 3: v->regs[fetch_operand(v, mode)] = v->regs[0]; break;
-        // Jump
-        case 4: jump(v, mode); break;
-        // Stack push
-        case 5: mem_write(v, v->sp, fetch_operand(v, mode)); v->sp--; break;
-        // Stack pop into reg
-        case 6: {
+        // Memory Instructions
+        case NOOP: break;
+        case LDA: v->regs[0] = fetch_operand(v, mode); break;
+        case SAM: mem_write(v, fetch_operand(v, mode), v->regs[0]); break;
+        case SAR: v->regs[fetch_operand(v, mode)] = v->regs[0]; break;
+        case JMP: jump(v, mode); break;
+        case PSH: mem_write(v, v->sp, fetch_operand(v, mode)); v->sp--; break;
+        case POP: {
             v->sp++; 
             if (mode == 7) { // PC
                 v->pc = mem_read(v, v->sp);
@@ -294,15 +305,13 @@ void vm_exec_opcode(vm *v) {
             }
             break;
         }
-        // Compare
-        case 7: {
+        case CMP: {
              uint8_t operand = fetch_operand(v, mode);
              v->flags = (v->flags & ~FLAG(Z)) | (v->regs[0] == operand);
              break; 
         }
         // Math Instructions
-        // 8 Add
-        case 8: {
+        case ADD: {
             uint16_t operand = fetch_operand(v, mode);
             SETFLAG(v, FLAG(C), HASCARRY(v->regs[0], operand));
             SETFLAG(v, FLAG(C), ISZERO(v->regs[0]));
@@ -311,47 +320,36 @@ void vm_exec_opcode(vm *v) {
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // 9 AND
-        case 9: {
+        case AND: {
             v->regs[0] &= fetch_operand(v, mode); 
             SETFLAG(v, FLAG(Z), ISZERO(v->regs[0]));
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // 10 OR
-        case 10: {
+        case OR: {
             v->regs[0] |= fetch_operand(v, mode); 
             SETFLAG(v, FLAG(Z), ISZERO(v->regs[0]));
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // 11 NOT
-        case 11: {
+        case NOT: {
             v->regs[0] = ~v->regs[0]; 
             SETFLAG(v, FLAG(Z), ISZERO(v->regs[0]));
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // 12 Shift right
-        case 12: {
+        case SHR: {
             v->regs[0] = (v->regs[0] >> fetch_operand(v, mode)); 
             SETFLAG(v, FLAG(Z), ISZERO(v->regs[0]));
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // 13 Shift left
-        case 13: {
+        case SHL: {
             v->regs[0] = (v ->regs[0] << fetch_operand(v, mode)); 
             SETFLAG(v, FLAG(Z), ISZERO(v->regs[0]));
             SETFLAG(v, FLAG(N), ISNEG(v->regs[0]));
             break;
         }
-        // GPU Instructions
-        // Should only be used in direct GPU access mode (not implemted yet)
-        // Set pixel color at pointeur position
-        case 14: v->gpu_memory[v->gpu_pointer] = fetch_operand(v, mode); break;
-        // Set GPU Pointer
-        case 15: v->gpu_pointer = fetch_operand(v, mode); break;
         // Unknown
         default: ABORT("Unkown upcode"); break;
     }
